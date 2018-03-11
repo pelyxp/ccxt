@@ -160,6 +160,7 @@ exchanges = [
     'acx',
     'allcoin',
     'anxpro',
+    'bancor',
     'bibox',
     'binance',
     'bit2c',
