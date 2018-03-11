@@ -4,6 +4,7 @@
 # https://github.com/ccxt/ccxt/blob/master/CONTRIBUTING.md#how-to-contribute-code
 
 from ccxt.async.base.exchange import Exchange
+import json
 from ccxt.base.errors import ExchangeError
 
 
@@ -432,7 +433,7 @@ class cobinhood (Exchange):
             'trading_pair_id': market['id'],
             'type': type,  # market, limit, stop, stop_limit
             'side': side,
-            'size': self.amount_to_precision(symbol, amount),
+            'size': self.amount_to_string(symbol, amount),
         }
         if type != 'market':
             request['price'] = self.price_to_precision(symbol, price)
@@ -537,6 +538,6 @@ class cobinhood (Exchange):
             return
         if body[0] != '{':
             raise ExchangeError(self.id + ' ' + body)
-        response = self.unjson(body)
+        response = json.loads(body)
         message = self.safe_value(response['error'], 'error_code')
         raise ExchangeError(self.id + ' ' + message)
