@@ -451,7 +451,7 @@ module.exports = class cobinhood extends Exchange {
             'trading_pair_id': market['id'],
             'type': type, // market, limit, stop, stop_limit
             'side': side,
-            'size': this.amountToPrecision (symbol, amount),
+            'size': this.amountToString (symbol, amount),
         };
         if (type !== 'market')
             request['price'] = this.priceToPrecision (symbol, price);
@@ -569,7 +569,7 @@ module.exports = class cobinhood extends Exchange {
         if (body[0] !== '{') {
             throw new ExchangeError (this.id + ' ' + body);
         }
-        let response = this.unjson (body);
+        let response = JSON.parse (body);
         let message = this.safeValue (response['error'], 'error_code');
         throw new ExchangeError (this.id + ' ' + message);
     }
