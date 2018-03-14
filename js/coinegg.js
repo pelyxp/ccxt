@@ -3,7 +3,7 @@
 //  ---------------------------------------------------------------------------
 
 const Exchange = require ('./base/Exchange');
-const { ExchangeError, AuthenticationError, InvalidNonce, InsufficientFunds, InvalidOrder, OrderNotFound, DDoSProtection } = require ('./base/errors');
+const { ExchangeError, ExchangeNotAvailable, AuthenticationError, InvalidNonce, InsufficientFunds, InvalidOrder, OrderNotFound, DDoSProtection } = require ('./base/errors');
 
 //  ---------------------------------------------------------------------------
 
@@ -133,10 +133,12 @@ module.exports = class coinegg extends Exchange {
             let bases = await this.webGetQuoteAllcoin ({
                 'quote': quoteId,
             });
+            if (typeof bases === 'undefined')
+                throw new ExchangeNotAvailable (this.id + ' fetchMarkets() for "' + quoteId + '" returned: "' + this.json (bases) + '"');
             let baseIds = Object.keys (bases);
             let numBaseIds = baseIds.length;
             if (numBaseIds < 1)
-                throw new ExchangeError (this.id + ' fetchMarkets() failed for ' + quoteId);
+                throw new ExchangeNotAvailable (this.id + ' fetchMarkets() for "' + quoteId + '" returned: "' + this.json (bases) + '"');
             for (let i = 0; i < baseIds.length; i++) {
                 let baseId = baseIds[i];
                 let market = bases[baseId];
@@ -452,7 +454,7 @@ module.exports = class coinegg extends Exchange {
                 'key': this.apiKey,
                 'nonce': this.nonce (),
             }, query));
-            let secret = this.hash (this.secret);
+            let secret = this.hash (this.encode (this.secret));
             let signature = this.hmac (this.encode (query), this.encode (secret));
             query += '&' + 'signature=' + signature;
             if (method === 'GET') {
