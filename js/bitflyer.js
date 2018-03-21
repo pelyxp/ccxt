@@ -156,6 +156,7 @@ module.exports = class bitflyer extends Exchange {
             'product_code': this.marketId (symbol),
         }, params));
         let timestamp = this.parse8601 (ticker['timestamp']);
+        let last = parseFloat (ticker['ltp']);
         return {
             'symbol': symbol,
             'timestamp': timestamp,
@@ -163,12 +164,14 @@ module.exports = class bitflyer extends Exchange {
             'high': undefined,
             'low': undefined,
             'bid': parseFloat (ticker['best_bid']),
+            'bidVolume': undefined,
             'ask': parseFloat (ticker['best_ask']),
+            'askVolume': undefined,
             'vwap': undefined,
             'open': undefined,
-            'close': undefined,
-            'first': undefined,
-            'last': parseFloat (ticker['ltp']),
+            'close': last,
+            'last': last,
+            'previousClose': undefined,
             'change': undefined,
             'percentage': undefined,
             'average': undefined,
@@ -222,6 +225,7 @@ module.exports = class bitflyer extends Exchange {
             'size': amount,
         };
         let result = await this.privatePostSendchildorder (this.extend (order, params));
+        // { "status": - 200, "error_message": "Insufficient funds", "data": null }
         return {
             'info': result,
             'id': result['child_order_acceptance_id'],

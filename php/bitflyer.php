@@ -155,6 +155,7 @@ class bitflyer extends Exchange {
             'product_code' => $this->market_id($symbol),
         ), $params));
         $timestamp = $this->parse8601 ($ticker['timestamp']);
+        $last = floatval ($ticker['ltp']);
         return array (
             'symbol' => $symbol,
             'timestamp' => $timestamp,
@@ -162,12 +163,14 @@ class bitflyer extends Exchange {
             'high' => null,
             'low' => null,
             'bid' => floatval ($ticker['best_bid']),
+            'bidVolume' => null,
             'ask' => floatval ($ticker['best_ask']),
+            'askVolume' => null,
             'vwap' => null,
             'open' => null,
-            'close' => null,
-            'first' => null,
-            'last' => floatval ($ticker['ltp']),
+            'close' => $last,
+            'last' => $last,
+            'previousClose' => null,
             'change' => null,
             'percentage' => null,
             'average' => null,
@@ -221,6 +224,7 @@ class bitflyer extends Exchange {
             'size' => $amount,
         );
         $result = $this->privatePostSendchildorder (array_merge ($order, $params));
+        // array ( "status" => - 200, "error_message" => "Insufficient funds", "data" => null )
         return array (
             'info' => $result,
             'id' => $result['child_order_acceptance_id'],

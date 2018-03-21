@@ -149,6 +149,7 @@ class bitflyer (Exchange):
             'product_code': self.market_id(symbol),
         }, params))
         timestamp = self.parse8601(ticker['timestamp'])
+        last = float(ticker['ltp'])
         return {
             'symbol': symbol,
             'timestamp': timestamp,
@@ -156,12 +157,14 @@ class bitflyer (Exchange):
             'high': None,
             'low': None,
             'bid': float(ticker['best_bid']),
+            'bidVolume': None,
             'ask': float(ticker['best_ask']),
+            'askVolume': None,
             'vwap': None,
             'open': None,
-            'close': None,
-            'first': None,
-            'last': float(ticker['ltp']),
+            'close': last,
+            'last': last,
+            'previousClose': None,
             'change': None,
             'percentage': None,
             'average': None,
@@ -211,6 +214,7 @@ class bitflyer (Exchange):
             'size': amount,
         }
         result = await self.privatePostSendchildorder(self.extend(order, params))
+        # {"status": - 200, "error_message": "Insufficient funds", "data": null}
         return {
             'info': result,
             'id': result['child_order_acceptance_id'],
