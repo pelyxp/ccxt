@@ -4,7 +4,7 @@
 
 # -----------------------------------------------------------------------------
 
-__version__ = '1.11.149'
+__version__ = '1.12.172'
 
 # -----------------------------------------------------------------------------
 
@@ -15,6 +15,10 @@ from ccxt.base.errors import DDoSProtection
 from ccxt.base.errors import RequestTimeout
 from ccxt.base.errors import ExchangeNotAvailable
 from ccxt.base.errors import InvalidAddress
+
+# -----------------------------------------------------------------------------
+
+from ccxt.base.decimal_to_precision import DECIMAL_PLACES
 
 # -----------------------------------------------------------------------------
 
@@ -152,7 +156,7 @@ class Exchange(object):
         'fetchClosedOrders': False,
         'fetchCurrencies': False,
         'fetchDepositAddress': False,
-        'fetchFees': False,
+        'fetchFundingFees': False,
         'fetchL2OrderBook': True,
         'fetchMarkets': True,
         'fetchMyTrades': False,
@@ -165,8 +169,11 @@ class Exchange(object):
         'fetchTicker': True,
         'fetchTickers': False,
         'fetchTrades': True,
+        'fetchTradingFees': False,
         'withdraw': False,
     }
+
+    precisionMode = DECIMAL_PLACES
 
     minFundingAddressLength = 10  # used in check_address
     substituteCommonCurrencyCodes = True
@@ -880,7 +887,7 @@ class Exchange(object):
     def load_fees(self):
         self.load_markets()
         self.populate_fees()
-        if not self.has['fetchFees']:
+        if not (self.has['fetchTradingFees'] or self.has['fetchFundingFees']):
             return self.fees
 
         fetched_fees = self.fetch_fees()
@@ -893,7 +900,7 @@ class Exchange(object):
         return self.fees
 
     def fetch_markets(self):
-        return self.markets
+        return self.to_array(self.markets)
 
     def fetch_fees(self):
         trading = {}
@@ -1001,12 +1008,12 @@ class Exchange(object):
         })
 
     def parse_order_book(self, orderbook, timestamp=None, bids_key='bids', asks_key='asks', price_key=0, amount_key=1):
-        timestamp = timestamp or self.milliseconds()
         return {
             'bids': self.sort_by(self.parse_bids_asks(orderbook[bids_key], price_key, amount_key) if (bids_key in orderbook) and isinstance(orderbook[bids_key], list) else [], 0, True),
             'asks': self.sort_by(self.parse_bids_asks(orderbook[asks_key], price_key, amount_key) if (asks_key in orderbook) and isinstance(orderbook[asks_key], list) else [], 0),
             'timestamp': timestamp,
-            'datetime': self.iso8601(timestamp),
+            'datetime': self.iso8601(timestamp) if timestamp is not None else None,
+            'nonce': None,
         }
 
     def parse_balance(self, balance):
@@ -1188,10 +1195,10 @@ class Exchange(object):
         }
 
     def edit_limit_buy_order(self, id, symbol, *args):
-        return self.edit_limit_order(symbol, 'buy', *args)
+        return self.edit_limit_order(id, symbol, 'buy', *args)
 
     def edit_limit_sell_order(self, id, symbol, *args):
-        return self.edit_limit_order(symbol, 'sell', *args)
+        return self.edit_limit_order(id, symbol, 'sell', *args)
 
     def edit_limit_order(self, id, symbol, *args):
         return self.edit_order(id, symbol, 'limit', *args)

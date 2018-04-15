@@ -4,9 +4,19 @@
 # https://github.com/ccxt/ccxt/blob/master/CONTRIBUTING.md#how-to-contribute-code
 
 from ccxt.async.base.exchange import Exchange
+
+# -----------------------------------------------------------------------------
+
+try:
+    basestring  # Python 3
+except NameError:
+    basestring = str  # Python 2
 import hashlib
 import math
+import json
 from ccxt.base.errors import ExchangeError
+from ccxt.base.errors import InvalidOrder
+from ccxt.base.errors import OrderNotFound
 
 
 class huobipro (Exchange):
@@ -24,11 +34,13 @@ class huobipro (Exchange):
             'hostname': 'api.huobipro.com',
             'has': {
                 'CORS': False,
-                'fetchOHCLV': True,
-                'fetchOrders': True,
-                'fetchOrder': True,
-                'fetchOpenOrders': True,
                 'fetchDepositAddress': True,
+                'fetchOHCLV': True,
+                'fetchOpenOrders': True,
+                'fetchClosedOrders': True,
+                'fetchOrder': True,
+                'fetchOrders': False,
+                'fetchTradingLimits': True,
                 'withdraw': True,
             },
             'timeframes': {
@@ -65,6 +77,7 @@ class huobipro (Exchange):
                         'common/symbols',  # 查询系统支持的所有交易对
                         'common/currencys',  # 查询系统支持的所有币种
                         'common/timestamp',  # 查询系统当前时间
+                        'common/exchange',  # order limits
                     ],
                 },
                 'private': {
@@ -77,6 +90,7 @@ class huobipro (Exchange):
                         'order/matchresults',  # 查询当前成交、历史成交
                         'dw/withdraw-virtual/addresses',  # 查询虚拟币提现地址
                         'dw/deposit-virtual/addresses',
+                        'query/deposit-withdraw',
                     ],
                     'post': [
                         'order/orders/place',  # 创建并执行一个新订单(一步下单， 推荐使用)
@@ -100,14 +114,17 @@ class huobipro (Exchange):
                     'taker': 0.002,
                 },
             },
+            'exceptions': {
+                'order-limitorder-amount-min-error': InvalidOrder,  # limit order amount error, min: `0.001`
+                'order-orderstate-error': OrderNotFound,  # canceling an already canceled order
+                'order-queryorder-invalid': OrderNotFound,  # querying a non-existent order
+            },
         })
 
-    async def fetch_markets(self):
-        response = await self.publicGetCommonSymbols()
-        markets = response['data']
+    def parse_markets(self, markets):
         numMarkets = len(markets)
         if numMarkets < 1:
-            raise ExchangeError(self.id + ' publicGetCommonSymbols returned empty response: ' + self.json(response))
+            raise ExchangeError(self.id + ' publicGetCommonSymbols returned empty response: ' + self.json(markets))
         result = []
         for i in range(0, len(markets)):
             market = markets[i]
@@ -152,6 +169,55 @@ class huobipro (Exchange):
                 'info': market,
             })
         return result
+
+    async def load_trading_limits(self, symbols=None, reload=False, params={}):
+        if reload or not('limitsLoaded' in list(self.options.keys())):
+            response = await self.fetch_trading_limits(symbols)
+            limits = response['limits']
+            keys = list(limits.keys())
+            for i in range(0, len(keys)):
+                symbol = keys[i]
+                self.markets[symbol] = self.extend(self.markets[symbol], {
+                    'limits': limits[symbol],
+                })
+        return self.markets
+
+    async def fetch_trading_limits(self, symbols=None, params={}):
+        #  by default it will try load withdrawal fees of all currencies(with separate requests)
+        #  however if you define codes = ['ETH', 'BTC'] in args it will only load those
+        await self.load_markets()
+        info = {}
+        limits = {}
+        if symbols is None:
+            symbols = self.symbols
+        for i in range(0, len(symbols)):
+            symbol = symbols[i]
+            market = self.market(symbol)
+            response = await self.publicGetCommonExchange(self.extend({
+                'symbol': market['id'],
+            }))
+            limit = self.parse_trading_limits(response)
+            info[symbol] = response
+            limits[symbol] = limit
+        return {
+            'limits': limits,
+            'info': info,
+        }
+
+    def parse_trading_limits(self, response, symbol=None, params={}):
+        data = response['data']
+        if data is None:
+            return None
+        return {
+            'amount': {
+                'min': data['limit-order-must-greater-than'],
+                'max': data['limit-order-must-less-than'],
+            },
+        }
+
+    async def fetch_markets(self):
+        response = await self.publicGetCommonSymbols()
+        return self.parse_markets(response['data'])
 
     def parse_ticker(self, ticker, market=None):
         symbol = None
@@ -220,7 +286,10 @@ class huobipro (Exchange):
         if 'tick' in response:
             if not response['tick']:
                 raise ExchangeError(self.id + ' fetchOrderBook() returned empty response: ' + self.json(response))
-            return self.parse_order_book(response['tick'], response['tick']['ts'])
+            orderbook = response['tick']
+            timestamp = orderbook['ts']
+            orderbook['nonce'] = orderbook['version']
+            return self.parse_order_book(orderbook, timestamp)
         raise ExchangeError(self.id + ' fetchOrderBook() returned unrecognized response: ' + self.json(response))
 
     async def fetch_ticker(self, symbol, params={}):
@@ -246,13 +315,15 @@ class huobipro (Exchange):
             'amount': trade['amount'],
         }
 
-    async def fetch_trades(self, symbol, since=None, limit=None, params={}):
+    async def fetch_trades(self, symbol, since=None, limit=2000, params={}):
         await self.load_markets()
         market = self.market(symbol)
-        response = await self.marketGetHistoryTrade(self.extend({
+        request = {
             'symbol': market['id'],
-            'size': 2000,
-        }, params))
+        }
+        if limit is not None:
+            request['size'] = limit
+        response = await self.marketGetHistoryTrade(self.extend(request, params))
         data = response['data']
         result = []
         for i in range(0, len(data)):
@@ -273,14 +344,16 @@ class huobipro (Exchange):
             ohlcv['amount'],
         ]
 
-    async def fetch_ohlcv(self, symbol, timeframe='1m', since=None, limit=None, params={}):
+    async def fetch_ohlcv(self, symbol, timeframe='1m', since=None, limit=2000, params={}):
         await self.load_markets()
         market = self.market(symbol)
-        response = await self.marketGetHistoryKline(self.extend({
+        request = {
             'symbol': market['id'],
             'period': self.timeframes[timeframe],
-            'size': 2000,  # max = 2000
-        }, params))
+        }
+        if limit is not None:
+            request['size'] = limit
+        response = await self.marketGetHistoryKline(self.extend(request, params))
         return self.parse_ohlcvs(response['data'], market, timeframe, since, limit)
 
     async def load_accounts(self, reload=False):
@@ -324,35 +397,25 @@ class huobipro (Exchange):
             result[currency] = account
         return self.parse_balance(result)
 
-    async def fetch_orders(self, symbol=None, since=None, limit=None, params={}):
+    async def fetch_orders_by_states(self, states, symbol=None, since=None, limit=None, params={}):
         if not symbol:
             raise ExchangeError(self.id + ' fetchOrders() requires a symbol parameter')
-        self.load_markets()
+        await self.load_markets()
         market = self.market(symbol)
-        status = None
-        if 'type' in params:
-            status = params['type']
-        elif 'status' in params:
-            status = params['status']
-        else:
-            raise ExchangeError(self.id + ' fetchOrders() requires a type param or status param for spot market ' + symbol + '(0 or "open" for unfilled or partial filled orders, 1 or "closed" for filled orders)')
-        if (status == 0) or (status == 'open'):
-            status = 'submitted,partial-filled'
-        elif (status == 1) or (status == 'closed'):
-            status = 'filled,partial-canceled'
-        else:
-            raise ExchangeError(self.id + ' fetchOrders() wrong type param or status param for spot market ' + symbol + '(0 or "open" for unfilled or partial filled orders, 1 or "closed" for filled orders)')
         response = await self.privateGetOrderOrders(self.extend({
             'symbol': market['id'],
-            'states': status,
+            'states': states,
         }))
         return self.parse_orders(response['data'], market, since, limit)
 
+    async def fetch_orders(self, symbol=None, since=None, limit=None, params={}):
+        return await self.fetch_orders_by_states('pre-submitted,submitted,partial-filled,filled,partial-canceled,canceled', symbol, since, limit, params)
+
     async def fetch_open_orders(self, symbol=None, since=None, limit=None, params={}):
-        open = 0  # 0 for unfilled orders, 1 for filled orders
-        return await self.fetch_orders(symbol, None, None, self.extend({
-            'status': open,
-        }, params))
+        return await self.fetch_orders_by_states('pre-submitted,submitted,partial-filled', symbol, since, limit, params)
+
+    async def fetch_closed_orders(self, symbol=None, since=None, limit=None, params={}):
+        return await self.fetch_orders_by_states('filled,partial-canceled,canceled', symbol, since, limit, params)
 
     async def fetch_order(self, id, symbol=None, params={}):
         await self.load_markets()
@@ -364,6 +427,8 @@ class huobipro (Exchange):
     def parse_order_status(self, status):
         if status == 'partial-filled':
             return 'open'
+        elif status == 'partial-canceled':
+            return 'canceled'
         elif status == 'filled':
             return 'closed'
         elif status == 'canceled':
@@ -453,10 +518,13 @@ class huobipro (Exchange):
             'info': response,
         }
 
+    def fee_to_precision(self, currency, fee):
+        return float(self.decimal_to_precision(fee, 0, self.currencies[currency]['precision']))
+
     def calculate_fee(self, symbol, type, side, amount, price, takerOrMaker='taker', params={}):
         market = self.markets[symbol]
         rate = market[takerOrMaker]
-        cost = float(self.cost_to_precision(symbol, amount * rate))
+        cost = amount * rate
         key = 'quote'
         if side == 'sell':
             cost *= price
@@ -466,7 +534,7 @@ class huobipro (Exchange):
             'type': takerOrMaker,
             'currency': market[key],
             'rate': rate,
-            'cost': float(self.fee_to_precision(symbol, cost)),
+            'cost': float(self.fee_to_precision(market[key], cost)),
         }
 
     async def withdraw(self, currency, amount, address, tag=None, params={}):
@@ -526,9 +594,22 @@ class huobipro (Exchange):
         url = self.urls['api'] + url
         return {'url': url, 'method': method, 'body': body, 'headers': headers}
 
-    async def request(self, path, api='public', method='GET', params={}, headers=None, body=None):
-        response = await self.fetch2(path, api, method, params, headers, body)
-        if 'status' in response:
-            if response['status'] == 'error':
-                raise ExchangeError(self.id + ' ' + self.json(response))
-        return response
+    def handle_errors(self, httpCode, reason, url, method, headers, body):
+        if not isinstance(body, basestring):
+            return  # fallback to default error handler
+        if len(body) < 2:
+            return  # fallback to default error handler
+        if (body[0] == '{') or (body[0] == '['):
+            response = json.loads(body)
+            if 'status' in response:
+                #
+                #     {"status":"error","err-code":"order-limitorder-amount-min-error","err-msg":"limit order amount error, min: `0.001`","data":null}
+                #
+                status = self.safe_string(response, 'status')
+                if status == 'error':
+                    code = self.safe_string(response, 'err-code')
+                    feedback = self.id + ' ' + self.json(response)
+                    exceptions = self.exceptions
+                    if code in exceptions:
+                        raise exceptions[code](feedback)
+                    raise ExchangeError(feedback)

@@ -16,6 +16,7 @@ import math
 import json
 from ccxt.base.errors import ExchangeError
 from ccxt.base.errors import AuthenticationError
+from ccxt.base.errors import PermissionDenied
 from ccxt.base.errors import InsufficientFunds
 from ccxt.base.errors import InvalidOrder
 from ccxt.base.errors import OrderNotFound
@@ -37,12 +38,11 @@ class bittrex (Exchange):
                 'CORS': True,
                 'createMarketOrder': False,
                 'fetchDepositAddress': True,
-                'fetchClosedOrders': 'emulated',
+                'fetchClosedOrders': True,
                 'fetchCurrencies': True,
                 'fetchMyTrades': False,
                 'fetchOHLCV': True,
                 'fetchOrder': True,
-                'fetchOrders': True,
                 'fetchOpenOrders': True,
                 'fetchTickers': True,
                 'withdraw': True,
@@ -163,6 +163,7 @@ class bittrex (Exchange):
                 'ORDER_NOT_OPEN': InvalidOrder,
                 'UUID_INVALID': OrderNotFound,
                 'RATE_NOT_PROVIDED': InvalidOrder,  # createLimitBuyOrder('ETH/BTC', 1, 0)
+                'WHITELIST_VIOLATION_IP': PermissionDenied,
             },
         })
 
@@ -566,7 +567,7 @@ class bittrex (Exchange):
             raise e
         return self.parse_order(response['result'])
 
-    def fetch_orders(self, symbol=None, since=None, limit=None, params={}):
+    def fetch_closed_orders(self, symbol=None, since=None, limit=None, params={}):
         self.load_markets()
         request = {}
         market = None
@@ -578,10 +579,6 @@ class bittrex (Exchange):
         if symbol:
             return self.filter_by_symbol(orders, symbol)
         return orders
-
-    def fetch_closed_orders(self, symbol=None, since=None, limit=None, params={}):
-        orders = self.fetch_orders(symbol, since, limit, params)
-        return self.filter_by(orders, 'status', 'closed')
 
     def fetch_deposit_address(self, code, params={}):
         self.load_markets()
@@ -609,6 +606,7 @@ class bittrex (Exchange):
 
     def withdraw(self, code, amount, address, tag=None, params={}):
         self.check_address(address)
+        self.load_markets()
         currency = self.currency(code)
         request = {
             'currency': currency['id'],

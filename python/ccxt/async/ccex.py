@@ -75,6 +75,8 @@ class ccex (Exchange):
                 'IOT': 'IoTcoin',
                 'BLC': 'Cryptobullcoin',
                 'XID': 'InternationalDiamond',
+                'LUX': 'Luxmi',
+                'CRC': 'CoreCoin',
             },
         })
 
@@ -213,7 +215,7 @@ class ccex (Exchange):
     async def fetch_tickers(self, symbols=None, params={}):
         await self.load_markets()
         tickers = await self.webGetPrices(params)
-        result = {'info': tickers}
+        result = {}
         ids = list(tickers.keys())
         for i in range(0, len(ids)):
             id = ids[i]
